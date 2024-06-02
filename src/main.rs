@@ -1,13 +1,9 @@
 use async_std::task;
 use bytes::Bytes;
 use clap::Parser;
-use env_logger;
-use hostname;
 use log::info;
-use serde_json;
-use std::{future::Future, time::Duration};
+use std::time::Duration;
 
-const SAVE_TO: &str = "~/.local/share/deployerd";
 const WAIT_TIME_SECS: u64 = 60;
 
 #[derive(Parser, Debug)]
@@ -35,7 +31,11 @@ fn unzip_tarball(content: Bytes) -> Result<(), Box<dyn std::error::Error>> {
     // Unzip the tarball
     let mut archive =
         tar::Archive::new(flate2::read::GzDecoder::new(std::io::Cursor::new(content)));
-    archive.unpack(SAVE_TO)?;
+    
+    let save_to = dirs::config_dir().unwrap().join("deployerd");
+    std::fs::create_dir_all(&save_to)?;
+    archive.unpack(&save_to)?;
+    log::debug!("Unzipped tarball to {:?}", &save_to);
     Ok(())
 }
 
@@ -51,10 +51,7 @@ async fn get_repo_sha(
     let response = client.get(url).send().await?;
     let content = response.json::<Vec<serde_json::Value>>().await?;
 
-    let commit_sha = content
-        .iter()
-        .find(|x| x["ref"] == ref_name)
-        .unwrap()["object"]["sha"]
+    let commit_sha = content.iter().find(|x| x["ref"] == ref_name).unwrap()["object"]["sha"]
         .as_str()
         .unwrap();
 
@@ -67,7 +64,11 @@ fn make_user_agent() -> String {
     format!("deployerd/1.0 ({})", hostname)
 }
 
-async fn process_repo(client: reqwest::Client, user: &str, repo: &str) -> Result<(), Box<dyn std::error::Error>> {
+async fn process_repo(
+    client: reqwest::Client,
+    user: &str,
+    repo: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let content = get_repo(&client, &user, &repo).await?;
     unzip_tarball(content)?;
     Ok(())
@@ -112,7 +113,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Err(e) => {
                         log::error!("Error downloading repository: {}", e);
                     }
-                }   
+                }
             }
         }
 
